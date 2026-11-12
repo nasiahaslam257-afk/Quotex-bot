@@ -1,56 +1,65 @@
+# Quotex Telegram Signal Bot
 import yfinance as yf
 import pandas as pd
 import time
-from datetime import datetime
+import requests
 
-REAL = {"EURUSD":"EURUSD=X","GBPUSD":"GBPUSD=X","USDJPY":"USDJPY=X","AUDUSD":"AUDUSD=X","USDCAD":"USDCAD=X","EURGBP":"EURGBP=X","EURJPY":"EURJPY=X","GBPJPY":"GBPJPY=X","NZDUSD":"NZDUSD=X","USDCHF":"USDCHF=X","EURCHF":"EURCHF=X","AUDJPY":"AUDJPY=X","CADJPY":"CADJPY=X","GBPCHF":"GBPCHF=X","EURCAD":"EURCAD=X"}
-OTC = {"EURUSD-OTC":"EURUSD=X","GBPUSD-OTC":"GBPUSD=X","USDJPY-OTC":"USDJPY=X","AUDUSD-OTC":"AUDUSD=X","EURGBP-OTC":"EURGBP=X","USDCHF-OTC":"USDCHF=X","NZDUSD-OTC":"NZDUSD=X","EURJPY-OTC":"EURJPY=X","GBPJPY-OTC":"GBPJPY=X","USDCAD-OTC":"USDCAD=X","AUDCAD-OTC":"AUDCAD=X","EURCAD-OTC":"EURCAD=X","GBPCHF-OTC":"GBPCHF=X","AUDJPY-OTC":"AUDJPY=X","EURCHF-OTC":"EURCHF=X","USDINR-OTC":"USDINR=X"}
-ALL = {**REAL, **OTC}
+# --- TUMHARI SETTING ---
+TOKEN = "8815619611:AAEKLFdpqWWUt_ndXkM5KWIWH94vhEDdRJg 
+ "  # Yahan apna BotFather wala Token paste karo
+CHAT_ID = "8618668442"  # Tumhari ID, ye maine laga di hai
 
-def analyze(symbol):
+PAIRS = {
+    "EURUSD": "EURUSD=X",
+    "GBPUSD": "GBPUSD=X",
+    "USDJPY": "JPY=X",
+    "AUDUSD": "AUDUSD=X",
+    "USDCAD": "USDCAD=X",
+    "EURJPY": "EURJPY=X",
+}
+
+def send_telegram(msg):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
     try:
-        data = yf.download(symbol, period="1d", interval="1m", progress=False)
-        if len(data) < 30: return None
-        data = data.tail(100)
-        close = data['Close']
-        ema9 = close.ewm(span=9).mean()
-        ema21 = close.ewm(span=21).mean()
-        ema50 = close.ewm(span=50).mean()
-        delta = close.diff()
-        gain = delta.where(delta>0,0).rolling(14).mean()
-        loss = -delta.where(delta<0,0).rolling(14).mean()
-        rsi = 100 - (100/(1+(gain/loss)))
-        sma20 = close.rolling(20).mean()
-        std = close.rolling(20).std()
-        upper = sma20 + (std*2)
-        lower = sma20 - (std*2)
-        macd = close.ewm(span=12).mean() - close.ewm(span=26).mean()
-        sig = macd.ewm(span=9).mean()
-        c = float(close.iloc[-1]); r = float(rsi.iloc[-1])
-        e9=float(ema9.iloc[-1]); e21=float(ema21.iloc[-1]); e50=float(ema50.iloc[-1])
-        up=float(upper.iloc[-1]); lo=float(lower.iloc[-1])
-        m=float(macd.iloc[-1]); s=float(sig.iloc[-1])
-        call=0; put=0
-        if e9>e21>e50: call+=1
-        elif e9<e21<e50: put+=1
-        if 50<r<68: call+=1
-        elif 32<r<50: put+=1
-        if c<=lo: call+=1
-        elif c>=up: put+=1
-        if m>s: call+=1
-        elif m<s: put+=1
-        if call>=3: return f"🟢 CALL | Price:{c:.5f} | RSI:{r:.1f} | Score:{call}/4"
-        elif put>=3: return f"🔴 PUT | Price:{c:.5f} | RSI:{r:.1f} | Score:{put}/4"
-        else: return f"⏳ WAIT | Price:{c:.5f} | RSI:{r:.1f}"
+        requests.post(url, data=data, timeout=10)
+        print("Telegram pe bhej diya:", msg)
     except Exception as e:
+        print("Telegram Error:", e)
+
+def get_signal(symbol):
+    try:
+        df = yf.download(symbol, period="1d", interval="1m", progress=False)
+        if len(df) < 20:
+            return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        close = df['Close']
+        delta = close.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        last_rsi = float(rsi.iloc[-1])
+        price = float(close.iloc[-1])
+        if last_rsi < 30:
+            return f"🟢 CALL | {price:.5f} | RSI {last_rsi:.1f}"
+        elif last_rsi > 70:
+            return f"🔴 PUT | {price:.5f} | RSI {last_rsi:.1f}"
+        else:
+            return None
+    except Exception as e:
+        print("Error", symbol, e)
         return None
 
-print("QUOTEX PRO BOT STARTED - Real + OTC - TF 5s to 1h - RSI+EMA+BB+MACD")
+send_telegram("✅ *Quotex Telegram Bot START ho gaya!*\nHar 1 min me signal check karunga.")
+print("Bot Started...")
+
 while True:
-    print(f"\n--- SCAN {datetime.now().strftime('%H:%M:%S')} ---")
-    for name, sym in ALL.items():
-        res = analyze(sym)
-        if res and ("CALL" in res or "PUT" in res):
-            print(f"{name} -> {res}")
-    print("Agla Scan 60 sec baad...")
+    for name, symbol in PAIRS.items():
+        sig = get_signal(symbol)
+        if sig:
+            msg = f"📊 *{name} Signal*\n{sig}\n⏰ Time: 1 Min Trade"
+            send_telegram(msg)
+    print("1 min wait...")
     time.sleep(60)
